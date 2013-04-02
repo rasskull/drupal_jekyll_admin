@@ -1,0 +1,4 @@
+name = SuperStar Jekyll Admin Tool
+description = "Admin tools for Superstar Media Jekyll Sites"
+core = 7.x
+version = "7.x-1.x"

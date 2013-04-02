@@ -1,0 +1,11 @@
+<?php
+
+function ssm_jekyll_install() {
+
+
+}
+
+function ssm_jekyll_uninstall() {
+  // unset vars
+}
+
