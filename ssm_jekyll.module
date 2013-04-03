@@ -55,7 +55,8 @@ function ssm_jekyll_menu() {
 
 
 /**
- * Displays Jekyll posts
+ * Displays Jekyll posts in admin listings
+ * Can have customized displays if needed
  */
 function ssm_jekyll_post_list() {
 
@@ -80,6 +81,9 @@ function ssm_jekyll_post_edit() {
 }
 
 
+/**
+ * Form for Jekyll post editing
+ */
 function ssm_jekyll_post_edit_form() {
   $file = arg(4) . '.markdown';
   $path = FOLDER . $file;
@@ -89,25 +93,60 @@ function ssm_jekyll_post_edit_form() {
     
     // read yaml
     $fields = _ssm_jekyll_read_yaml($data_parts[1]);
+  
+    // category
+    $form['layout'] = array(
+      '#type' => 'hidden', 
+      '#value' => $fields['layout'],
+    );
 
+    // category
+    $form['categories'] = array(
+      '#type' => 'hidden', 
+      '#value' => '['.arg(3).']',
+    );
+
+    // insert title manually as this is required
+    $form['title'] = array(
+      '#type' => 'textfield',
+      '#title' => 'Title',
+      '#default_value' => htmlspecialchars_decode($fields['title']),
+      '#required' => true,
+    );
+
+    // article date
+    $date = date('Y-m-d', _ssm_jekyll_read_post_date($file));
+    $format = 'Y-m-d';
+    $form['date'] = array(
+      '#type' => 'date_popup',
+      '#title' => t('Date'),
+      '#default_value' => $date, 
+      '#date_format' => $format,
+      '#date_label_position' => 'within',
+      '#date_increment' => 15,
+      '#date_year_range' => '-3:+3',
+    );
+
+    // loop through and catch all fields
     foreach ($fields as $key => $field) {
       // hide certain fields
-      $hide = array('layout','categories');
+      $hide = array('title', 'layout','categories');
       if(in_array($key, $hide)) continue;
       $form[$key] = array(
       '#type' => 'textfield',
       '#title' => ucfirst($key),
-      '#default_value' => $field,
+      '#default_value' => htmlspecialchars_decode($field),
       );
 
     }
 
-    // get date from file name
-    $date = _ssm_jekyll_read_post_date($file);
-    $fields['timestamp'] = $date;
-    $fields['date'] = date('m/d/Y', $date);
-    $fields['filename'] = $file;
-    
+    // file name
+    $form['file'] = array(
+      '#type' => 'hidden', 
+      '#value' => $file,
+    );
+
+    // post body
     $form['body'] = array(
       '#type' => 'textarea',
       '#title' => 'Body',
@@ -124,7 +163,63 @@ function ssm_jekyll_post_edit_form() {
   
 }
 
+function ssm_jekyll_post_edit_form_validate($form_id, $form_values) {
+  // special validators here aside from standard ones
+  //dpm($form_values);
+}
+
+
 function ssm_jekyll_post_edit_form_submit($form_id, $form_values) {
+
+  // exclude certain fields to be passed into the file header
+  $exclude = array('date', 'file', 'body', 'op', 'form_build_id', 'form_token', 'form_id', 'submit');
+  $fields = array();
+  foreach ($form_values['values'] as $key => $value) {
+    if(in_array($key, $exclude)) continue;
+    $fields[$key] = $value;
+  }
+  // build our post
+  $yaml = _ssm_jekyll_format_yaml($fields);
+  $post = _ssm_jekyll_format_post($yaml, $form_values['values']['body']);
+
+  dpm($post);
+  
+
+  // get category name
+  $category = str_replace('[', '', $form_values['values']['categories']);
+  $category = str_replace(']', '', $category);
+  // build filename
+  $new_filename = $form_values['values']['date'] . "-$category-" . _ssm_jekyll_clean_url($fields['title']) . '.markdown';
+  dpm($new_filename);
+
+  if($new_filename === $form_values['values']['file']) {
+    // if the file names are the same, write to file
+    file_put_contents(FOLDER . $new_filename, $post);
+
+    drupal_set_message('"' . $form_values['values']['title'] . ' "has been created.');
+  } else {
+    // if the file names are different, write new file and remove old one
+    file_put_contents(FOLDER . $new_filename, $post);
+    unlink(FOLDER . $form_values['values']['file']);
+    
+    drupal_set_message('"' . $form_values['values']['title'] . ' "has been modified.');
+  /*
+    $cmd = 'git rm ' . FOLDER . $form_values['values']['file'].' 2>&1';
+    //$cmd = 'ls';
+    dpm($cmd);
+    exec($cmd, $output, $error_code); 
+    if ($error_code) { 
+      drupal_set_message("Error $error_code occurred"); 
+    } else {
+      drupal_set_message('"' . $form_values['values']['title'] . ' "has been updated.');
+    }
+    */
+  
+  }
+
+
+  //
+
   /*
   variable_set('ssm_jekyll_svn_update_site_path', $form_values['values']['ssm_jekyll_svn_update_site_path']);
   variable_set('ssm_jekyll_svn_update_repo', $form_values['values']['ssm_jekyll_svn_update_repo']);
@@ -154,6 +249,7 @@ function ssm_jekyll_post_edit_form_submit($form_id, $form_values) {
   
   drupal_set_message(t($message));
   */
+  
 }
 
 
@@ -202,7 +298,7 @@ function _ssm_jekyll_read_posts($category) {
 
 
 /*
- * Helper function to read yalm front matter
+ * Helper function to read yaml front matter
  */
 function _ssm_jekyll_read_yaml($raw_yaml) {
    // to do: site will store category info that can tie into the fields such as ordering, description, etc... 
@@ -212,10 +308,35 @@ function _ssm_jekyll_read_yaml($raw_yaml) {
     if(!strlen($line)) continue;
     $field = explode(':', $line, 2);
     if(count($field)>0) {
-      $fields[trim($field[0])] = trim($field[1]);
+      $fields[trim($field[0])] = trim(str_replace('"', '', $field[1]));
     }
   }
   return $fields;
+}
+
+
+/*
+ * Helper function to format yaml front matter
+ * $fields is an associative array
+ */
+function _ssm_jekyll_format_yaml($data) {
+  $fields = array();
+  foreach ($data as $key => $value) {
+    $fields[] = $key . ': "' . htmlspecialchars($value) . '"';
+  }
+  return implode("\n", $fields);
+}
+
+
+/*
+ * Helper function to format post
+ */
+function _ssm_jekyll_format_post($yaml,$body) {
+  $post = "---\n";
+  $post .= $yaml;
+  $post .= "\n---\n";
+  $post .= $body;
+  return $post;
 }
 
 
@@ -317,6 +438,21 @@ function ssm_jekyll_preprocess_page($vars) {
   if(arg(1) == 'posts' && arg(2)){
     drupal_set_title(ucfirst(arg(2)) . ' Admin');
   }
+}
+
+
+function _ssm_jekyll_clean_url($str, $replace=array(), $delimiter='-', $maxLength=128) {
+
+  if( !empty($replace) ) {
+    $str = str_replace((array)$replace, ' ', $str);
+  }
+
+  $clean = iconv('UTF-8', 'ASCII//TRANSLIT', $str);
+  $clean = preg_replace("%[^-/+|\w ]%", '', $clean);
+  $clean = strtolower(trim(substr($clean, 0, $maxLength), '-'));
+  $clean = preg_replace("/[\/_|+ -]+/", $delimiter, $clean);
+
+  return $clean;
 }
 
 // no ending php tag!
